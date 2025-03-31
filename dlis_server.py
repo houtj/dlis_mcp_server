@@ -78,31 +78,64 @@ class DLISAnalyzer:
         
         summary = []
         for lf in self.physical_file:
-            summary.append(f'fileheader: {lf.fileheader.attic["ID"].value[0].strip()}:\n')
+            try:
+                # Get file header
+                file_id = lf.fileheader.attic.get('ID')
+                assert file_id and file_id.value, "Invalid file ID"
+                summary.append(f'fileheader: {file_id.value[0].strip()}:\n')
+            except (AssertionError, AttributeError, IndexError):
+                continue
             
             for attr in meta_attr_list:
-                attr_value = getattr(lf, attr)
-                if len(attr_value) == 0:
+                try:
+                    # Get attribute value
+                    attr_value = getattr(lf, attr)
+                    assert hasattr(attr_value, '__len__') and len(attr_value) > 0, "Invalid attribute value"
+                    summary.append(f'\t{attr}: \n')
+                except (AssertionError, AttributeError):
                     continue
-                summary.append(f'\t{attr}: \n')
+                    
                 for sub_attr in attr_value:
-                    subsub_attrs = sub_attr.attic.keys()
-                    summary.append(f'\t\t{sub_attr.name}: \n')
+                    try:
+                        # Get sub-attribute info
+                        assert hasattr(sub_attr, 'attic') and hasattr(sub_attr, 'name'), "Invalid sub-attribute"
+                        subsub_attrs = sub_attr.attic.keys()
+                        summary.append(f'\t\t{sub_attr.name}: \n')
+                    except (AssertionError, AttributeError, TypeError):
+                        continue
+                        
                     for subsub_attr in subsub_attrs:
-                        value = [x.id if isinstance(x, dlisio.core.obname) else x for x in sub_attr.attic[subsub_attr].value]
-                        if len(value) == 0:
+                        try:
+                            # Get value and process it
+                            value = sub_attr.attic.get(subsub_attr)
+                            assert value and hasattr(value, 'value'), "Invalid value"
+                            
+                            # Process value list
+                            processed_value = []
+                            for x in value.value:
+                                try:
+                                    processed_value.append(x.id if hasattr(x, 'id') else x)
+                                except (AttributeError, TypeError):
+                                    continue
+                            
+                            assert processed_value, "No valid values found"
+                            value = processed_value[0] if len(processed_value) == 1 else processed_value
+                            
+                            # Get units
+                            unit = getattr(value, 'units', '')
+                            
+                            # Format and append value
+                            value_str = str(value)
+                            assert value_str, "Empty value string"
+                            value_str = value_str.replace('\r\n', ' ').replace('\n', ' ')
+                            
+                            summary.append(
+                                f'\t\t\t{subsub_attr}({unit}): {value_str}\n' if unit 
+                                else f'\t\t\t{subsub_attr}: {value_str}\n'
+                            )
+                                
+                        except (AssertionError, AttributeError, TypeError, KeyError):
                             continue
-                        if len(value) == 1:
-                            value = value[0]
-                        unit = sub_attr.attic[subsub_attr].units
-                        value_str = str(value)
-                        if value_str == '':
-                            continue
-                        value_str = value_str.replace('\r\n', ' ').replace('\n', ' ')
-                        if unit != '':
-                            summary.append(f'\t\t\t{subsub_attr.lower()}({unit}): {value_str}\n')
-                        else:
-                            summary.append(f'\t\t\t{subsub_attr.lower()}: {value_str}\n')
 
         return ''.join(summary)
 
