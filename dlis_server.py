@@ -7,6 +7,7 @@ from mcp.types import Tool, TextContent
 from mcp.shared.exceptions import McpError
 from dlisio import dlis
 from pydantic import BaseModel
+import dlisio
 
 
 class DLISTools(str, Enum):
@@ -35,20 +36,33 @@ class DLISAnalyzer:
         if not self.physical_file:
             self.load_file()
             
+        # Check if logical file exists
+        logical_file_found = False
         for lf in self.physical_file:
-            if lf.fileheader.attic['ID'].value[0].strip() != filename:
-                continue
-            for frame in lf.frames:
-                if frame.name.strip() != framename:
-                    continue
-                for channel in frame.channels:
-                    if channel.name.strip() != channelname:
-                        continue
-                    return {
-                        "curves": channel.curves().tolist(),
-                        "units": channel.units
-                    }
-        return None, None
+            if lf.fileheader.attic['ID'].value[0].strip() == filename:
+                logical_file_found = True
+                # Check if frame exists
+                frame_found = False
+                for frame in lf.frames:
+                    if frame.name.strip() == framename:
+                        frame_found = True
+                        # Check if channel exists
+                        channel_found = False
+                        for channel in frame.channels:
+                            if channel.name.strip() == channelname:
+                                channel_found = True
+                                return {
+                                    "curves": channel.curves().tolist(),
+                                    "units": channel.units
+                                }
+                        if not channel_found:
+                            raise McpError(f"Channel '{channelname}' not found in frame '{framename}'")
+                if not frame_found:
+                    raise McpError(f"Frame '{framename}' not found in logical file '{filename}'")
+        if not logical_file_found:
+            raise McpError(f"Logical file '{filename}' not found in the DLIS file")
+        
+        return None
 
     def get_meta(self):
         """Extract metadata from the DLIS file with hierarchical structure"""
