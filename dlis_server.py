@@ -80,10 +80,10 @@ class DLISAnalyzer:
         for lf in self.physical_file:
             try:
                 # Get file header
-                file_id = lf.fileheader.attic.get('ID')
+                file_id = lf.fileheader.attic['ID']
                 assert file_id and file_id.value, "Invalid file ID"
                 summary.append(f'fileheader: {file_id.value[0].strip()}:\n')
-            except (AssertionError, AttributeError, IndexError):
+            except (AssertionError, AttributeError, IndexError, KeyError):
                 continue
             
             for attr in meta_attr_list:
@@ -107,7 +107,7 @@ class DLISAnalyzer:
                     for subsub_attr in subsub_attrs:
                         try:
                             # Get value and process it
-                            value = sub_attr.attic.get(subsub_attr)
+                            value = sub_attr.attic[subsub_attr]
                             assert value and hasattr(value, 'value'), "Invalid value"
                             
                             # Process value list
