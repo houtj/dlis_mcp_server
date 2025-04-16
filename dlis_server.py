@@ -6,12 +6,12 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 from mcp.shared.exceptions import McpError
 from dlisio import dlis
+import numpy as np
 from pydantic import BaseModel
-import dlisio
-
+from pathlib import Path
 
 class DLISTools(str, Enum):
-    GET_CHANNEL = "get_channel"
+    EXTRACT_CHANNELS = "extract_channels"
     GET_META = "get_meta"
 
 
@@ -30,39 +30,86 @@ class DLISAnalyzer:
             return True
         except Exception as e:
             raise McpError(f"Error loading DLIS file: {str(e)}")
-
-    def get_channel(self, filename: str, framename: str, channelname: str):
-        """Get channel data and units from a specific logical file, frame, and channel"""
+    
+    def extract_channels(self):
+        """Extract all channels from the DLIS file and save to folder structure"""
         if not self.physical_file:
             self.load_file()
             
-        # Check if logical file exists
-        logical_file_found = False
-        for lf in self.physical_file:
-            if lf.fileheader.attic['ID'].value[0].strip() == filename:
-                logical_file_found = True
-                # Check if frame exists
-                frame_found = False
-                for frame in lf.frames:
-                    if frame.name.strip() == framename:
-                        frame_found = True
-                        # Check if channel exists
-                        channel_found = False
-                        for channel in frame.channels:
-                            if channel.name.strip() == channelname:
-                                channel_found = True
-                                return {
-                                    "curves": channel.curves().tolist(),
-                                    "units": channel.units
-                                }
-                        if not channel_found:
-                            raise McpError(f"Channel '{channelname}' not found in frame '{framename}'")
-                if not frame_found:
-                    raise McpError(f"Frame '{framename}' not found in logical file '{filename}'")
-        if not logical_file_found:
-            raise McpError(f"Logical file '{filename}' not found in the DLIS file")
+        # Create base output folder at same level as input file
+        input_path = Path(self.file_path)
+        base_folder = input_path.parent / f'{input_path.stem}_channels'
+        base_folder.mkdir(exist_ok=True)
         
-        return None
+        # Track used names to handle duplicates
+        used_lf_names = set()
+        
+        for lf in self.physical_file:
+            # Get logical file name and sanitize
+            lf_name = lf.fileheader.attic['ID'].value[0].strip()
+            lf_name = "".join(c if c not in '<>:"/\\|?*' else "_" for c in lf_name)
+            
+            # Handle duplicate names
+            orig_lf_name = lf_name
+            while lf_name in used_lf_names:
+                lf_name = f"{orig_lf_name}_"
+            used_lf_names.add(lf_name)
+            
+            # Create logical file folder
+            lf_folder = base_folder / lf_name
+            lf_folder.mkdir(exist_ok=True)
+            
+            # Reset used names for frames
+            used_frame_names = set()
+            
+            for frame in lf.frames:
+                # Get frame name and sanitize
+                frame_name = frame.name.strip()
+                frame_name = "".join(c if c not in '<>:"/\\|?*' else "_" for c in frame_name)
+                
+                # Handle duplicate names
+                orig_frame_name = frame_name
+                while frame_name in used_frame_names:
+                    frame_name = f"{orig_frame_name}_"
+                used_frame_names.add(frame_name)
+                
+                # Create frame folder
+                frame_folder = lf_folder / frame_name
+                frame_folder.mkdir(exist_ok=True)
+                
+                # Reset used names for channels
+                used_channel_names = set()
+                
+                for channel in frame.channels:
+                    # Get channel name and sanitize
+                    channel_name = channel.name.strip()
+                    channel_name = "".join(c if c not in '<>:"/\\|?*' else "_" for c in channel_name)
+                    
+                    # Handle duplicate names
+                    orig_channel_name = channel_name
+                    while channel_name in used_channel_names:
+                        channel_name = f"{orig_channel_name}_"
+                    used_channel_names.add(channel_name)
+                    
+                    try:
+                        # Create channel folder
+                        channel_folder = frame_folder / channel_name
+                        channel_folder.mkdir(exist_ok=True)
+                        
+                        # Save channel data to NPY file
+                        curves = channel.curves()
+                        npy_path = channel_folder / "values.npy"
+                        np.save(npy_path, curves)
+                        
+                        # Save channel metadata to JSON
+                        meta_path = channel_folder / "meta.json"
+                        with open(meta_path, 'w') as f:
+                            json.dump({"unit": channel.units}, f)
+                            
+                    except Exception as e:
+                        print(f"Error saving channel {channel_name}: {str(e)}")
+                        continue
+        return str(base_folder)
 
     def get_meta(self):
         """Extract metadata from the DLIS file with hierarchical structure"""
@@ -100,6 +147,7 @@ class DLISAnalyzer:
                         # Get sub-attribute info
                         assert hasattr(sub_attr, 'attic') and hasattr(sub_attr, 'name'), "Invalid sub-attribute"
                         subsub_attrs = sub_attr.attic.keys()
+                        if len(subsub_attrs)== 0: continue
                         summary.append(f'\t\t{sub_attr.name}: \n')
                     except (AssertionError, AttributeError, TypeError):
                         continue
@@ -136,8 +184,14 @@ class DLISAnalyzer:
                                 
                         except (AssertionError, AttributeError, TypeError, KeyError):
                             continue
-
-        return ''.join(summary)
+        summary = ''.join(summary)
+        # Write to meta.txt in same folder as input file
+        input_path = Path(self.file_path)
+        output_path = input_path.parent / f'{input_path.stem}_meta.txt'
+        # Write summary to output file
+        with open(output_path, 'w') as f:
+            f.write(summary)
+        return str(output_path)
 
 
 async def serve() -> None:
@@ -149,34 +203,22 @@ async def serve() -> None:
         """List available DLIS analysis tools."""
         return [
             Tool(
-                name=DLISTools.GET_CHANNEL.value,
-                description="Get channel data and units from a specific logical file, frame, and channel",
+                name=DLISTools.EXTRACT_CHANNELS.value,
+                description="Extract all channel data from a DLIS file, including values, units. Returns path to folder containing extracted channel data",
                 inputSchema={
-                    "type": "object",
+                    "type": "object", 
                     "properties": {
                         "file_path": {
                             "type": "string",
-                            "description": "Path to the DLIS file to analyze",
-                        },
-                        "filename": {
-                            "type": "string",
-                            "description": "Name of the logical file",
-                        },
-                        "framename": {
-                            "type": "string",
-                            "description": "Name of the frame",
-                        },
-                        "channelname": {
-                            "type": "string",
-                            "description": "Name of the channel",
+                            "description": "Path to the DLIS file to analyze"
                         }
                     },
-                    "required": ["file_path", "filename", "framename", "channelname"],
-                },
+                    "required": ["file_path"]
+                }
             ),
             Tool(
                 name=DLISTools.GET_META.value,
-                description="Get detailed metadata from the DLIS file with hierarchical structure",
+                description="Get detailed metadata from the DLIS file with hierarchical structure, including file headers, axes, channels, frames, measurements, and origins. Returns path to generated metadata text file.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -203,25 +245,18 @@ async def serve() -> None:
             analyzer = DLISAnalyzer(file_path)
             
             match name:
-                case DLISTools.GET_CHANNEL.value:
-                    filename = arguments.get("filename")
-                    framename = arguments.get("framename")
-                    channelname = arguments.get("channelname")
-                    
-                    if not all([filename, framename, channelname]):
-                        raise ValueError("Missing required arguments for get_channel")
-                    
-                    channel_data = analyzer.get_channel(filename, framename, channelname)
+                case DLISTools.EXTRACT_CHANNELS.value:
+                    output_path = analyzer.extract_channels()
                     result = {
                         "success": True,
-                        "channel_data": channel_data
+                        "output_path": output_path
                     }
 
                 case DLISTools.GET_META.value:
-                    meta = analyzer.get_meta()
+                    output_path = analyzer.get_meta()
                     result = {
                         "success": True,
-                        "meta": meta
+                        "output_path": output_path
                     }
 
                 case _:

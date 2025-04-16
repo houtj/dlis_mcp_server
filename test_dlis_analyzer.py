@@ -15,21 +15,11 @@ class TestDLISAnalyzer(unittest.TestCase):
         self.assertIsInstance(meta, str)
         self.assertTrue(len(meta) > 0)
 
-        # Test that the output contains expected metadata sections
-        expected_sections = [
-            'fileheader:',
-            'channels:',
-            'frames:',
-            'parameters:',
-            'tools:'
-        ]
-        for section in expected_sections:
-            self.assertIn(section, meta)
-
-        # Test that the metadata has the expected hierarchical structure
-        self.assertIn('\t', meta)  # Check for indentation
-        self.assertIn('\t\t', meta)  # Check for nested indentation
-        self.assertIn('\t\t\t', meta)  # Check for deeply nested indentation
+    def test_extract_channels(self):
+        # Test that extract_channels returns a non-empty string
+        output_path = self.analyzer.extract_channels()
+        self.assertIsInstance(output_path, str)
+        self.assertTrue(len(output_path) > 0)
 
 if __name__ == '__main__':
     unittest.main() 
